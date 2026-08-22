@@ -5,6 +5,40 @@
 
 ---
 
+## 零、⚠️ 先看这个：谁能连、谁连不了
+
+实测结论（2026-08-22，在 Arena 沙箱内用 curl 逐个探测）：
+
+```
+https://github.com            200   ✅ 放行
+https://pypi.org              200   ✅ 放行
+https://example.com           000   ❌ TLS 被断
+https://cloudflare.com        000   ❌ TLS 被断
+https://test.trycloudflare.com 000  ❌ TLS 被断
+tcp 1.1.1.1:443                     ✅ 通（说明不是端口封锁，是 SNI 白名单）
+```
+
+**也就是说：Arena 沙箱里的 Agent 目前无法直接访问你的隧道地址。**
+（我上一轮说"沙箱能连"是没实测就下的结论，在此更正。）
+
+那这套东西还有没有用？**有，而且很有用** —— 隧道 + 网关对下面这些客户端全都可用：
+
+| 客户端 | 能否用这条隧道 | 说明 |
+|---|---|---|
+| 你本机的 Antigravity / Cursor / Claude Desktop | ✅ **根本不用隧道** | 直接连 `127.0.0.1:8787`，网关的白名单/审计照样生效 |
+| 你的手机、公司电脑、出差在外 | ✅ | 这正是隧道的主场 |
+| n8n Cloud / Dify / Coze 等云端工作流 | ✅ | 用 HTTP 节点调 `/v1/servers/.../call` |
+| ChatGPT 自定义 GPT (Actions) | ✅ | 填隧道 URL + Bearer token |
+| **Arena 沙箱里的我** | ❌ 出网白名单挡住 | 见下方"让 Agent 也能用"的备选路径 |
+
+### 让 Agent 也能用的备选路径
+
+沙箱能访问 `github.com`。所以可以走 **GitHub 中转**：我把要执行的任务写进仓库的一个
+队列文件 → 你本机的 `agent_relay.py` 轮询拉取 → 调用本地网关执行 → 把结果 commit 回来 → 我读结果。
+全程不需要你开放任何公网入口，**比隧道更安全**。如果需要，告诉我，我来实现。
+
+---
+
 ## 一、先把几个问题说清楚
 
 | 你的问题 | 答案 |
@@ -13,7 +47,7 @@
 | 是不是必须内网穿透？ | 是，必须有"从公网能到达你本机"的通道。区别只是用什么通道、安不安全。 |
 | 一定要用 Docker 吗？ | **不用。** Windows 上跑一个 `cloudflared.exe` 就行，比 Docker 轻得多。Docker 版本作为方案 B 也给了（`docker-compose.yml`）。 |
 | 方案二（Docker）稳定吗？ | 隧道本身一样稳，但如果 MCP 要读你 Windows 本机文件/串口/AGV 硬件，容器里挂载和设备透传很折腾。**你这个场景推荐方案 A（原生 PowerShell）。** |
-| Arena 沙箱能连吗？ | 能。沙箱可以出网访问 HTTPS，我已在沙箱验证过整套网关逻辑（12/12 自检通过）。 |
+| Arena 沙箱能连吗？ | **⚠️ 实测不能，见第零节。** 沙箱出网是 SNI 白名单制，只放行 github.com / pypi.org 等少数域名，`trycloudflare.com`、`example.com` 全部被 TLS 层拦断。网关本身逻辑已在沙箱验证（12/12 通过），但隧道地址我这边访问不到。 |
 | 直接穿透安全吗？ | **不安全。** 裸暴露 = 谁知道 URL 谁就能调你本机工具，甚至读写文件。所以本方案不暴露 MCP，只暴露一个带鉴权的网关。 |
 | 能帮我干更多科研/办公活吗？ | 能。我通过 HTTP 调你的 MCP 工具（检索、批量处理文档、跑数据）。**限制**：不是原生 MCP 长连接；每个会话沙箱是新的，URL + token 要重新给我一次。 |
 
@@ -55,24 +89,44 @@
 > 如果你之前克隆过 `new`，那是旧副本、没有本分支，所以 `git checkout` 会报
 > `did not match any file(s) known to git`。重新克隆到 `new1` 即可。
 
+> 你的 Spyder/conda PowerShell 里 `powershell -File xxx.ps1` 会**静默吞掉所有输出**
+> （连报错都不打印），所以 **.ps1 脚本已降级为可选**。请用下面的纯 Python 方式。
+
 ```powershell
 cd E:\0mcp-agv
 
-# 1. 克隆到 new1（-b 直接切到本分支，不会碰原来的 new 目录）
+# 1. 克隆到 new1（不碰原来的 new 目录）
 git clone -b arena/01a02938-new https://github.com/mqgg5630-cyber/new.git new1
-
-# 2. 一键初始化 + 自检
-powershell -ExecutionPolicy Bypass -File new1\mcp-bridge\scripts\bootstrap.ps1
-
-# 3. 进目录
 cd new1\mcp-bridge
+
+# 2. 自检（应该 12 项全绿）
+python bridge.py check
+
+# 3. 一条命令起网关 + 隧道，自动打印 URL 和 TOKEN
+python bridge.py up
 ```
 
-然后开两个窗口：
+就这三步。`bridge.py` 会自动生成配置、生成并保存 token、下载 cloudflared、
+拉起隧道、抓出公网地址，最后打印一个大方框把 URL + TOKEN 一起给你。
+按 `Ctrl+C` 两者一起关闭，公网入口立刻消失。
+
+其它子命令：
 
 ```powershell
-# 窗口 1 —— 启动网关（首次会自动生成配置和 token）
-powershell -ExecutionPolicy Bypass -File scripts\start-gateway.ps1
+python bridge.py check        # 12 项端到端自检
+python bridge.py tools        # 看当前有哪些工具可用 / 哪些被策略拦了
+python bridge.py serve        # 只起网关（本机自用，不开公网）
+python bridge.py tunnel       # 只起隧道
+python bridge.py token        # 查看 token
+python bridge.py token --new  # 换一个 token
+```
+
+<details>
+<summary>（可选）分窗口手动方式</summary>
+
+```powershell
+# 窗口 1 —— 启动网关
+python bridge.py serve
 ```
 
 屏幕会打印：
@@ -87,9 +141,11 @@ mcp-bridge 1.0.0 已启动 → http://127.0.0.1:8787
 **另开一个 PowerShell 窗口**：
 
 ```powershell
+# 窗口 2 —— 启动隧道
 cd E:\0mcp-agv\new1\mcp-bridge
-powershell -ExecutionPolicy Bypass -File scripts\start-tunnel.ps1
+python bridge.py tunnel
 ```
+</details>
 
 会打印一个地址，例如：
 
@@ -275,6 +331,7 @@ tunnel 容器能访问它，宿主机端口都不开。
 
 | 文件 | 说明 |
 |---|---|
+| `bridge.py` | ⭐ **统一入口**：`up`/`check`/`serve`/`tunnel`/`tools`/`token` |
 | `gateway.py` | 安全网关本体，**零第三方依赖**，Python 3.9+ |
 | `bridge_config.example.json` | 配置模板，复制成 `bridge_config.json` 用 |
 | `demo_mcp_server.py` | 最小 MCP 服务器，用来先跑通链路 |
@@ -284,7 +341,7 @@ tunnel 容器能访问它，宿主机端口都不开。
 | `smoke_test.py` | 端到端自检，12 项断言 |
 | `scripts/start-gateway.ps1` | Windows 一键启网关（自动生成 token） |
 | `scripts/start-tunnel.ps1` | Windows 一键起隧道（自动下载 cloudflared） |
-| `scripts/bootstrap.ps1` | 一键克隆/更新到 `new1` + 自检 |
+| `scripts/bootstrap.ps1` | 一键克隆/更新到 `new1` + 自检（PowerShell 版，可选） |
 | `docker-compose.yml` / `.env.example` | 方案 B |
 
 ---
