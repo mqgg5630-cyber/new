@@ -51,14 +51,27 @@
 
 ## 三、方案 A（推荐）：Windows 原生，5 分钟跑通
 
-在 `E:\0mcp-agv` 下：
+> **装到独立目录 `new1`，不动你原来的 `E:\0mcp-agv\new`。**
+> 如果你之前克隆过 `new`，那是旧副本、没有本分支，所以 `git checkout` 会报
+> `did not match any file(s) known to git`。重新克隆到 `new1` 即可。
 
 ```powershell
-# 0. 克隆仓库（如果还没有）
-git clone https://github.com/mqgg5630-cyber/new.git
-cd new\mcp-bridge
+cd E:\0mcp-agv
 
-# 1. 启动网关（首次会自动生成配置和 token）
+# 1. 克隆到 new1（-b 直接切到本分支，不会碰原来的 new 目录）
+git clone -b arena/01a02938-new https://github.com/mqgg5630-cyber/new.git new1
+
+# 2. 一键初始化 + 自检
+powershell -ExecutionPolicy Bypass -File new1\mcp-bridge\scripts\bootstrap.ps1
+
+# 3. 进目录
+cd new1\mcp-bridge
+```
+
+然后开两个窗口：
+
+```powershell
+# 窗口 1 —— 启动网关（首次会自动生成配置和 token）
 powershell -ExecutionPolicy Bypass -File scripts\start-gateway.ps1
 ```
 
@@ -74,7 +87,7 @@ mcp-bridge 1.0.0 已启动 → http://127.0.0.1:8787
 **另开一个 PowerShell 窗口**：
 
 ```powershell
-cd E:\0mcp-agv\new\mcp-bridge
+cd E:\0mcp-agv\new1\mcp-bridge
 powershell -ExecutionPolicy Bypass -File scripts\start-tunnel.ps1
 ```
 
@@ -104,7 +117,68 @@ python client.py call demo echo '{\"text\":\"通了\"}'
 
 ---
 
-## 四、把 demo 换成你自己的 MCP
+## 四、穿透通了之后，还需要依赖 MCP 吗？
+
+**不需要。MCP 只是"怎么描述一个能力"的一种标准格式，不是能力本身。**
+
+要分清三件事：
+
+| 层 | 作用 | 能不能换掉 |
+|---|---|---|
+| **隧道**（cloudflared） | 只负责把字节从公网搬到你本机，**它不提供任何能力** | 可换（frp/ngrok），但 cloudflared 最省事最安全 |
+| **网关**（gateway.py） | 鉴权、白名单、只读、限速、审计 | 建议保留，这是安全的核心 |
+| **能力层** | 真正干活的代码 | **MCP 只是选项之一** |
+
+所以能力层有两条路，本仓库两条都给你实现了：
+
+### 路线 1：挂现成的 MCP（复用生态）
+
+社区已经写好的 MCP（filesystem、arxiv、zotero、Excel、浏览器…）直接填进
+`bridge_config.json` 的 `command` 就能用。好处是不用自己写。
+
+### 路线 2：不用 MCP，直接写普通 Python 函数 ⭐
+
+打开 `my_tools.py`，写一个普通函数就行：
+
+```python
+def csv_summary(path: str, rows: int = 5) -> dict:
+    """读取 CSV，返回列名、总行数和前几行样例。"""
+    ...
+```
+
+`local_tools_server.py` 会自动把它变成一个标准工具：
+函数名 → 工具名，docstring → 工具描述，类型注解 → 参数 schema。
+**你完全不用懂 MCP 协议，也不用装任何 MCP SDK。**
+
+仓库里已内置 5 个示例函数，实测输出：
+
+```
+machine_info   -> {"type":"object","properties":{}}
+find_files     -> {... "pattern":{"type":"string","default":"*"}, "limit":{"type":"integer","default":100}}
+read_text      -> {... "required":["path"]}
+csv_summary    -> {... "required":["path"]}
+run_agv_script -> {... "required":["script"]}
+被策略隐藏: ['write_note']       ← 只读模式自动拦截了写操作
+```
+
+其中 `run_agv_script` 特别有用：它能运行你工作目录里**任何已有的 .py 脚本**并返回输出。
+也就是说你以前写的所有科研脚本，不用改一行，立刻变成我能调用的能力。
+
+### 那"什么能力都有了"吗？
+
+诚实地说 —— **能力上限 = 你在 `my_tools.py` 里暴露了什么 + 你允许了什么**，不是无限的。
+
+- ✅ 能做：读写你本机文件、跑你的本地脚本、查你的本地数据库、操作 Excel/Word、
+  调你内网的服务、控制 AGV（如果你写了对应函数并放行）
+- ❌ 做不到：我"自动"知道你电脑上有什么。每一项能力都必须你先写成函数 / 挂上 MCP，
+  并在 `allow_tools` 里放行 —— **这个限制是特性不是缺陷**，它正是安全的来源。
+- ⚠️ 别做：写一个 `run_any_command(cmd)` 把整个 shell 暴露出来。那等于把你电脑的
+  完全控制权放到公网上，一旦 token 泄露后果不可控。要放开也请用白名单式的具体函数。
+
+---
+
+## 五、把 demo 换成你自己的 MCP
+
 
 编辑 `bridge_config.json` 的 `servers` 段：
 
@@ -136,7 +210,7 @@ python client.py call demo echo '{\"text\":\"通了\"}'
 
 ---
 
-## 五、想要更强的安全（长期使用推荐）
+## 六、想要更强的安全（长期使用推荐）
 
 临时隧道 URL 虽然随机、不可枚举，但本质上是"知道 URL + token 就能用"。
 长期跑建议升级成**命名隧道 + Cloudflare Access**，多一道身份验证：
@@ -167,7 +241,7 @@ bin\cloudflared.exe tunnel route dns mcp-agv mcp.你的域名.com
 
 ---
 
-## 六、方案 B：Docker
+## 七、方案 B：Docker
 
 见 `docker-compose.yml`。适合 MCP 本身能容器化的情况；
 如果 MCP 要摸 Windows 本机文件或 AGV 硬件，请用方案 A。
@@ -183,7 +257,7 @@ tunnel 容器能访问它，宿主机端口都不开。
 
 ---
 
-## 七、API 速查
+## 八、API 速查
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -197,22 +271,25 @@ tunnel 容器能访问它，宿主机端口都不开。
 
 ---
 
-## 八、文件清单
+## 九、文件清单
 
 | 文件 | 说明 |
 |---|---|
 | `gateway.py` | 安全网关本体，**零第三方依赖**，Python 3.9+ |
 | `bridge_config.example.json` | 配置模板，复制成 `bridge_config.json` 用 |
 | `demo_mcp_server.py` | 最小 MCP 服务器，用来先跑通链路 |
+| `local_tools_server.py` | **不用懂 MCP** 的适配器：把普通 Python 函数自动变成工具 |
+| `my_tools.py` | **你写自己能力的地方**，普通函数即可，内置 5 个示例 |
 | `client.py` | 客户端 / 命令行工具（我在沙箱里也用它） |
 | `smoke_test.py` | 端到端自检，12 项断言 |
 | `scripts/start-gateway.ps1` | Windows 一键启网关（自动生成 token） |
 | `scripts/start-tunnel.ps1` | Windows 一键起隧道（自动下载 cloudflared） |
+| `scripts/bootstrap.ps1` | 一键克隆/更新到 `new1` + 自检 |
 | `docker-compose.yml` / `.env.example` | 方案 B |
 
 ---
 
-## 九、自检结果
+## 十、自检结果
 
 在 Arena 沙箱实测：
 
@@ -229,7 +306,7 @@ tunnel 容器能访问它，宿主机端口都不开。
 
 ---
 
-## 十、常见问题
+## 十一、常见问题
 
 **Q: 隧道 URL 每次重启都变，很烦？**
 A: 用命名隧道（第五节），域名固定。

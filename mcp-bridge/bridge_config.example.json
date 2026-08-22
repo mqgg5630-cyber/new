@@ -33,6 +33,18 @@
       "timeout_seconds": 60
     },
 
+    "mytools": {
+      "enabled": true,
+      "_comment": "你自己的普通 Python 函数（写在 my_tools.py 里），不需要懂 MCP。",
+      "command": ["python", "local_tools_server.py"],
+      "cwd": null,
+      "env": { "MY_TOOLS_WORKSPACE": "E:\\\\0mcp-agv\\\\workspace" },
+      "read_only": true,
+      "allow_tools": [],
+      "deny_tools": [],
+      "timeout_seconds": 180
+    },
+
     "files": {
       "enabled": false,
       "_comment": "官方 filesystem MCP。cwd/参数里的目录就是它能看到的全部范围，务必只给一个专用工作目录。",
