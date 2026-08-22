@@ -1,0 +1,51 @@
+# Docker 备选方案（方案 B）
+#
+# 说明：如果你的 MCP 服务器需要访问 Windows 本机文件/串口/硬件，
+#      不推荐 Docker（跨系统挂载和设备透传很麻烦），直接用 PowerShell 脚本更稳。
+#      这套 compose 适合「MCP 本身也能跑在容器里」的场景。
+#
+# 用法:
+#   1. cp .env.example .env  并填 MCP_BRIDGE_TOKEN / TUNNEL_TOKEN
+#   2. docker compose up -d
+#   3. docker compose logs -f tunnel     # 查看公网地址
+
+services:
+  gateway:
+    image: python:3.12-slim
+    container_name: mcp-bridge-gateway
+    working_dir: /app
+    command: python gateway.py -c bridge_config.json --host 0.0.0.0 --port 8787
+    environment:
+      MCP_BRIDGE_TOKEN: ${MCP_BRIDGE_TOKEN:?请在 .env 里设置 MCP_BRIDGE_TOKEN}
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./:/app
+      # 把你要给 MCP 用的工作目录挂进来，只读：
+      # - E:\0mcp-agv\workspace:/workspace:ro
+    networks: [mcpnet]
+    restart: unless-stopped
+    # 不做 ports 映射 —— 只有同网络的 tunnel 容器能访问，不暴露宿主机端口
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8787/healthz',timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: mcp-bridge-tunnel
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks: [mcpnet]
+    restart: unless-stopped
+    # 命名隧道（推荐，可配 Cloudflare Access）：在 .env 设 TUNNEL_TOKEN
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+    # 临时隧道（无需账号，取消下面注释并注释掉上面那行）:
+    # command: tunnel --no-autoupdate --url http://gateway:8787
+
+networks:
+  mcpnet:
+    driver: bridge

@@ -1,0 +1,8 @@
+# 本地私有配置与运行产物，禁止提交
+bridge_config.json
+.env
+bin/
+logs/
+*.jsonl
+__pycache__/
+*.pyc

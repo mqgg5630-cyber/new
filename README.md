@@ -13,6 +13,7 @@
 | `skills/` | 5 个可直接安装的 Agent Skills（论文检索、文献综述、办公批处理、n8n 工作流、去AI化） |
 | `examples/` | 2 个"去AI化"可运行示例（Streamlit 论文检索 GUI、arXiv 日报脚本） |
 | `tools/md2docx.py` | Markdown → Word 转换脚本（改完报告重新生成 docx 用） |
+| `mcp-bridge/` | **让云端 Agent 安全调用你本地 MCP 的网关 + 内网穿透方案**（鉴权/白名单/只读/审计，见 [mcp-bridge/README.md](mcp-bridge/README.md)） |
 
 ## 🚀 快速开始
 

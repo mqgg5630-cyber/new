@@ -1,0 +1,61 @@
+{
+  "_comment": "复制本文件为 bridge_config.json 后修改。token 请用环境变量 MCP_BRIDGE_TOKEN，不要写在这里。",
+
+  "bind": {
+    "host": "127.0.0.1",
+    "port": 8787
+  },
+
+  "auth": {
+    "token_env": "MCP_BRIDGE_TOKEN",
+    "ip_allowlist": []
+  },
+
+  "rate_limit": {
+    "per_minute": 60,
+    "burst": 20
+  },
+
+  "logging": {
+    "level": "info",
+    "audit_file": "logs/audit.jsonl"
+  },
+
+  "servers": {
+    "demo": {
+      "enabled": true,
+      "command": ["python", "demo_mcp_server.py"],
+      "cwd": null,
+      "env": {},
+      "read_only": true,
+      "allow_tools": ["echo", "sum", "now", "list_dir", "read_text"],
+      "deny_tools": [],
+      "timeout_seconds": 60
+    },
+
+    "files": {
+      "enabled": false,
+      "_comment": "官方 filesystem MCP。cwd/参数里的目录就是它能看到的全部范围，务必只给一个专用工作目录。",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "E:\\\\0mcp-agv\\\\workspace"],
+      "read_only": true,
+      "allow_tools": [
+        "read_file", "read_text_file", "read_multiple_files",
+        "list_directory", "directory_tree", "search_files", "get_file_info"
+      ],
+      "deny_tools": ["write_file", "edit_file", "create_directory", "move_file"],
+      "timeout_seconds": 120
+    },
+
+    "agv": {
+      "enabled": false,
+      "_comment": "你自己的 AGV / 科研 MCP，改成真实启动命令即可。",
+      "command": ["python", "-m", "your_agv_mcp"],
+      "cwd": "E:\\\\0mcp-agv",
+      "env": { "AGV_PROFILE": "readonly" },
+      "read_only": true,
+      "allow_tools": [],
+      "deny_tools": ["shutdown", "reset", "move_robot"],
+      "timeout_seconds": 180
+    }
+  }
+}
