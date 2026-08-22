@@ -38,12 +38,16 @@ n8n 里用 **MCP Server Trigger** 节点把工作流暴露成 MCP 工具后，�
 
 同一份 n8n 工作流可以有完全不需要 AI 的用法：
 
-1. **Webhook 触发**：工作流首节点用 Webhook 节点，任何人/程序 `curl -X POST <webhook_url> -H 'Content-Type: application/json' -d '{"参数":...}'` 即可触发
-2. **定时触发**：Schedule 节点（如每周五 17:00）
-3. **表单触发**：n8n Form Trigger，给同事一个网页表单填参数 → 自动跑流程
-4. **n8n 内建 Webhook 测试**：n8n 编辑界面直接点 "Execute workflow" 手测
+1. **Webhook 触发（最常用，零 AI）**：工作流首节点用 Webhook 节点，任何程序/脚本/同事都能调，不需要 AI：
+   - Windows PowerShell：`curl.exe -X POST "http://localhost:5678/webhook/<Path>" -H "Content-Type: application/json" -d '{\"query\":\"关键词\"}'`
+   - 注意：Webhook 的 Path 在节点设置里（如 `crossref-bibtex`），URL = `http://localhost:5678/webhook/<Path>`
+2. **定时触发（全自动）**：加 Schedule Trigger 节点，Cron 表达式如 `0 9 * * *`（每天 9:00）或 `0 17 * * 5`（每周五 17:00）
+3. **表单触发（给同事自助）**：加 n8n Form Trigger 节点，生成网页表单 URL，同事填参数自动跑流程
+4. **GUI 按钮触发**：用 Streamlit/tkinter 包一个按钮，点击即 POST webhook（模板见本包 `examples/n8n_crossref_gui.py`）
+5. **n8n 内建 Webhook 测试**：n8n 编辑界面直接点 "Execute workflow" 手测
 
-给用户的交付物：**一个 webhook URL + 一个参数 JSON 示例 + 一个最小 HTML 表单页**。
+给用户的交付物：**一个 webhook URL + 一个参数 JSON 示例 + 一个 GUI/表单入口**。
+去AI化的判断标准：工作流里没有任何 LLM 节点 + 触发方式不依赖 AI 对话（webhook/定时/表单/按钮均可）。
 
 ## 检查清单（任何用法都过一遍）
 
