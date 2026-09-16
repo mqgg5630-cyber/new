@@ -1,0 +1,33 @@
+check round 1 on LAPTOP-R77M5D6M - passed (exit 0)
+cmd: powershell -NoProfile -ExecutionPolicy Bypass -File code/local_check.ps1
+elapsed: 13s
+
+OK: all .ps1 files are ASCII-only
+NOTE: python3 is not a working python - trying plain text
+OK: sync.config.json branch=arena/01a0a90b-new remote=origin (checked without python)
+OK: root scripts identical to skills/git-sync/scripts
+SKIP: python3 is not a working python - $var: typo scan skipped here
+      (it still runs in the agent sandbox before every push)
+SKIP: python3 is not a working python - watcher closing-line check skipped here
+      (it still runs in the agent sandbox before every push)
+OK: every .ps1 parses
+   (gate ran via E:\hermes\git\bin\bash.exe [git])
+== accept 2a: silent push PROVEN (ls-remote + push --dry-run, prompts disabled)
+== accept 2b (fallback): one LONG-LIVED loop process - one brief flash per logon,
+   not per poll. For zero flash: admin PowerShell -> .\watch.ps1 -Unregister ;
+   .\watch.ps1 -Register -Headless   (or fix the launcher, see watch-*.log)
+== exits in Invoke-PollRound: 6
+OK: every exit path sets its closing summary
+== exits in Invoke-PollOnce: 2 (lock held / crashed / normal)
+OK: loop closing lines covered (6 exit paths, all with their own summary)
+== check_loop_summary PASSED
+== accept 2c: watcher closing lines verified (every exit path has its summary)
+== local checks passed
+== success criteria: results/status/success_criteria.json
+   Hands-free acceptance for arena/01a0a90b-new: deliverables + local roundtrip file.
+   OK   exists: deliverable/git-sync-local-connect.docx (39005 B)
+   OK   exists: deliverable/git-sync-local-connect.pptx (37640 B)
+   OK   exists: results/local-roundtrip/from-local.txt (80 B)
+   OK   contains results/local-roundtrip/from-local.txt <- local->arena roundtrip OK
+   OK   size deliverable/git-sync-local-connect.docx: 39005 >= 5000
+   OK   size deliverable/git-sync-local-connect.pptx: 37640 >= 5000
