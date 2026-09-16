@@ -65,10 +65,17 @@ param(
     [switch]$Flash,
     [int]$CheckTimeoutMin = 0,
     [int]$SelfTestSec = 90,
-    [int]$KeeperMin = 10
+    [int]$KeeperMin = 10,
+    [switch]$CleanOthers
 )
 
 $ErrorActionPreference = 'Continue'
+# ensure UTF-8 output encoding to avoid GBK mojibake in PowerShell 5.1
+try {
+    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+    $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+} catch { }
+
 
 # repo root = walk up from this script until .git appears, so the script also
 # works when run straight from skills\git-sync\scripts\
@@ -470,6 +477,38 @@ function Get-WatchLoops {
     return $out
 }
 
+
+function Remove-OtherTasks {
+    Write-Host "== [CleanOthers] cleaning up other git-sync watcher tasks and processes ..." -ForegroundColor Cyan
+    try {
+        $all = Get-ScheduledTask 'git-sync-watch-*' -ErrorAction SilentlyContinue
+        foreach ($t in $all) {
+            if ($t.TaskName -ne $taskName) {
+                try {
+                    Stop-ScheduledTask -TaskName $t.TaskName -ErrorAction SilentlyContinue
+                    Unregister-ScheduledTask -TaskName $t.TaskName -Confirm:$false -ErrorAction Stop
+                    Write-Host ("== unregistered other task: " + $t.TaskName) -ForegroundColor Yellow
+                } catch {
+                    cmd /c ("schtasks /Delete /TN `"" + $t.TaskName + "`" /F >nul 2>nul")
+                    Write-Host ("-- tried unregistering " + $t.TaskName) -ForegroundColor DarkGray
+                }
+            }
+        }
+    } catch { }
+    try {
+        $loops = Get-CimInstance Win32_Process -Filter "Name LIKE 'power%' OR Name LIKE 'pwsh%'" -ErrorAction SilentlyContinue
+        foreach ($p in $loops) {
+            $cl = $p.CommandLine
+            if ($cl -and $cl -match 'watch\.ps1' -and $cl -notmatch [regex]::Escape($repoName) -and $p.ProcessId -ne $PID) {
+                try {
+                    Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+                    Write-Host ("== stopped other watcher loop (PID " + $p.ProcessId + ")") -ForegroundColor Yellow
+                } catch { }
+            }
+        }
+    } catch { }
+}
+
 function Stop-StaleLoops {
     # stop every other loop of this repo (any version) - called at loop start,
     # and by -Pause / -Unregister
@@ -728,7 +767,9 @@ if ($Test) {
 }
 
 # ------------------------------------------------------------ register task
+if ($CleanOthers) { Remove-OtherTasks }
 if ($Register -or $Unregister) {
+    if ($Register -and $CleanOthers) { Remove-OtherTasks }
     if ($Unregister) {
         $null = Stop-TaskNow
         $lp = Get-LoopPid

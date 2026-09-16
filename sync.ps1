@@ -27,6 +27,12 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+# ensure UTF-8 output encoding to avoid GBK mojibake in PowerShell 5.1
+try {
+    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+    $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+} catch { }
+
 
 # run git through cmd.exe: stderr stays stderr (no terminating ErrorRecord) and
 # the exit code is git's own

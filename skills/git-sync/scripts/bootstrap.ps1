@@ -17,10 +17,17 @@ param(
     [string]$Branch = '',
     [string]$Remote = 'origin',
     [string]$Config = '',
-    [switch]$Auto
+    [switch]$Auto,
+    [switch]$CleanOthers
 )
 
 $ErrorActionPreference = 'Stop'
+# ensure UTF-8 output encoding to avoid GBK mojibake in PowerShell 5.1
+try {
+    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+    $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+} catch { }
+
 
 # repo root = walk up from this script until .git appears, so the script also
 # works when run straight from skills\git-sync\scripts\
@@ -123,7 +130,7 @@ if ($Auto) {
     }
     $watch = Join-Path $repo 'watch.ps1'
     if (Test-Path -LiteralPath $watch) {
-        & $watch -Register
+        if ($CleanOthers) { & $watch -Register -CleanOthers } else { & $watch -Register }
     } else {
         Write-Host "   (watch.ps1 missing - upgrade the skill)" -ForegroundColor Yellow
     }

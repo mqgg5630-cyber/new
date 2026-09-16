@@ -32,6 +32,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# ensure UTF-8 output encoding to avoid GBK mojibake in PowerShell 5.1
+try {
+    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+    $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+} catch { }
+
 
 # repo root = walk up from this script until .git appears, so the script also
 # works when run straight from skills\git-sync\scripts\
