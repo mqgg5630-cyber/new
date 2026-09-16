@@ -5,6 +5,16 @@
   "download_sets": {
     "final": [
       "deliverable"
+    ],
+    "docs": [
+      "deliverable",
+      "results/sync"
+    ],
+    "all": [
+      "deliverable",
+      "code",
+      "skills",
+      "results"
     ]
   },
   "upload_map": {
