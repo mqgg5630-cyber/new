@@ -1,4 +1,4 @@
-> 当前版本 **v2.6.9**（开发分支；新会话暂停其他值守 / `-Focus` 切回；v2.6.8 round 18 真机推送闭环已通过）；`main` 上是 **v2.6.7**。安装/升级：本机 `agent-install.sh` 或 `install.ps1`；
+> 当前版本 **v2.7.0**（hands-free：本机 auto_pull/auto_push + Agent `agent-handsfree.sh` 按 success_criteria 自动 accept）。开发自 v2.6.9；`main` 上仍是 v2.6.7。
 > 用户侧升级三步：`.\sync.ps1` → `.\watch.ps1 -Unregister ; .\watch.ps1 -Register` → `.\watch.ps1 -Status`。切回本会话：`.\watch.ps1 -Focus`。
 
 ---
@@ -240,3 +240,28 @@ bash skills/git-sync/scripts/agent-wait.sh --request "验证X" --auto-accept
   单轮检查有硬超时（`check_timeout_min`，默认 30 分钟），超时判 failed 并在日志头记 `TIMEOUT`；
 * 同一时刻只有一个轮询在跑（文件锁防重叠）；agent 没 `--request` 时值守完全静默；
 * `--accept` 之后值守继续静默待命，直到下一次 `--request`。
+
+## 9. Hands-Free（v2.7.0）—— 解放双手
+
+配置 `hands_free` / `auto_pull` / `auto_push`（见 `sync.config.json`）。值守每轮：
+
+1. `auto_pull` → `sync.ps1`（你不用再手动拉）
+2. `auto_push` → 工作区有非排除脏文件则 `push.ps1 -NoPrompt`（你不用再手动推）
+3. 若 handshake 为 `awaiting_check` → 照旧跑 `check_cmd` 并推回 verdict
+
+Agent 侧一条命令闭环：
+
+```bash
+bash skills/git-sync/scripts/agent-handsfree.sh \
+     --sync "feat: ..." \
+     --request "verify ..." \
+     --timeout 600
+```
+
+它会：sync → request → wait 本机值守 → `agent-criteria.sh` 读 `success_criteria` → 全过则 `--accept` 停下。
+
+成功标准文件默认 `results/status/success_criteria.json`（`require_files` / `require_contains` / `min_bytes` …）。
+本机检查脚本 `code/local_check.ps1` 也会跑同一份标准。
+
+用户侧升级：` .\sync.ps1 ` → ` .\watch.ps1 -Unregister ; .\watch.ps1 -Register ` → ` .\watch.ps1 -Status `
+（Status 应显示 `hands-free: master=True auto_pull=True auto_push=True`）。

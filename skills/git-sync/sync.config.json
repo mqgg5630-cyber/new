@@ -37,5 +37,21 @@
   "receipt_history": "results/sync/history",
   "hardware_dir": "results/hardware",
   "handshake": "results/status/handshake.json",
-  "check_cmd": "powershell -NoProfile -ExecutionPolicy Bypass -File code/local_check.ps1"
+  "check_cmd": "powershell -NoProfile -ExecutionPolicy Bypass -File code/local_check.ps1",
+  "hands_free": true,
+  "auto_pull": true,
+  "auto_push": true,
+  "auto_push_prefix": "local: auto",
+  "auto_push_exclude": [
+    ".env",
+    ".env.*",
+    "**/*.pem",
+    "**/*.key",
+    "**/credentials*",
+    "**/*secret*",
+    "**/*token*"
+  ],
+  "success_criteria": "results/status/success_criteria.json",
+  "check_timeout_min": 30,
+  "lock_stale_min": 45
 }

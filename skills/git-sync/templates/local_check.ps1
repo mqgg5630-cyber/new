@@ -152,4 +152,81 @@ if (Test-Path -LiteralPath $loopChk) {
 # 4. add your own checks here ...
 
 if ($fail -eq 0) { Write-Output '== local checks passed' }
+
+# -------------------------------------------------------------------------
+# hands-free success criteria (v2.7.0)
+# If results/status/success_criteria.json (or config.success_criteria) exists,
+# require every listed file / substring / min size. Missing criteria file = skip.
+$critRel = 'results/status/success_criteria.json'
+if (Test-Path -LiteralPath '.\skills\git-sync\sync.config.json') {
+    try {
+        $cfgObj = Get-Content -LiteralPath '.\skills\git-sync\sync.config.json' -Encoding UTF8 -Raw | ConvertFrom-Json
+        if ($cfgObj.success_criteria) { $critRel = [string]$cfgObj.success_criteria }
+    } catch { }
+}
+$critRel = $critRel -replace '\\', '/'
+$critAbs = Join-Path (Get-Location) ($critRel -replace '/', '\')
+if (Test-Path -LiteralPath $critAbs) {
+    Write-Output ("== success criteria: " + $critRel)
+    try {
+        $crit = Get-Content -LiteralPath $critAbs -Encoding UTF8 -Raw | ConvertFrom-Json
+        if ($crit.description) { Write-Output ("   " + $crit.description) }
+        foreach ($f in @($crit.require_files)) {
+            if (-not $f) { continue }
+            $fp = Join-Path (Get-Location) ($f -replace '/', '\')
+            if (Test-Path -LiteralPath $fp) {
+                $sz = (Get-Item -LiteralPath $fp).Length
+                Write-Output ("   OK   exists: " + $f + " (" + $sz + " B)")
+            } else {
+                Write-Output ("   FAIL MISSING file: " + $f)
+                $fail = 1
+            }
+        }
+        if ($crit.require_contains) {
+            foreach ($prop in $crit.require_contains.PSObject.Properties) {
+                $f = [string]$prop.Name
+                $sub = [string]$prop.Value
+                $fp = Join-Path (Get-Location) ($f -replace '/', '\')
+                if (-not (Test-Path -LiteralPath $fp)) {
+                    Write-Output ("   FAIL MISSING for contains: " + $f)
+                    $fail = 1
+                    continue
+                }
+                $txt = Get-Content -LiteralPath $fp -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+                if ($null -eq $txt) { $txt = "" }
+                if ($txt.Contains($sub)) {
+                    Write-Output ("   OK   contains " + $f + " <- " + $sub)
+                } else {
+                    Write-Output ("   FAIL DOES NOT contain in " + $f + ": " + $sub)
+                    $fail = 1
+                }
+            }
+        }
+        if ($crit.min_bytes) {
+            foreach ($prop in $crit.min_bytes.PSObject.Properties) {
+                $f = [string]$prop.Name
+                $need = [int64]$prop.Value
+                $fp = Join-Path (Get-Location) ($f -replace '/', '\')
+                if (-not (Test-Path -LiteralPath $fp)) {
+                    Write-Output ("   FAIL MISSING for min_bytes: " + $f)
+                    $fail = 1
+                    continue
+                }
+                $sz = [int64](Get-Item -LiteralPath $fp).Length
+                if ($sz -ge $need) {
+                    Write-Output ("   OK   size " + $f + ": " + $sz + " >= " + $need)
+                } else {
+                    Write-Output ("   FAIL TOO SMALL " + $f + ": " + $sz + " < " + $need)
+                    $fail = 1
+                }
+            }
+        }
+    } catch {
+        Write-Output ("   FAIL criteria parse: " + $_.Exception.Message)
+        $fail = 1
+    }
+} else {
+    Write-Output ("== success criteria: (none at " + $critRel + " - skipped)")
+}
+
 exit $fail

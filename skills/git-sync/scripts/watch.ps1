@@ -24,6 +24,16 @@
 #     .\watch.ps1 -Register -Flash       # fallback launcher (brief flash per LOGON)
 #     .\watch.ps1 -Register -Headless    # zero window via S4U (session 0, ADMIN console!)
 #
+# HANDS-FREE (v2.7.0) - free the user from typing .\sync.ps1 / .\push.ps1:
+#   Config keys (skills/git-sync/sync.config.json):
+#     hands_free / auto_pull / auto_push  (all true = every poll:
+#       1) sync.ps1  -> pull agent updates automatically
+#       2) if the worktree is dirty (and not only excluded secrets) ->
+#          silent push.ps1 -NoPrompt "local: auto <stamp>"
+#       3) if a check is requested -> run check_cmd and push the verdict
+#   The agent side then uses agent-wait.sh --auto-accept + success_criteria
+#   so a round that meets the criteria closes by itself - no more user typing.
+#
 # WINDOW BEHAVIOUR - why v2.6.0 went "one process per logon":
 #   A console app started by Task Scheduler ALWAYS gets a console window first;
 #   '-WindowStyle Hidden' can only hide it afterwards. That is why the old design
@@ -115,6 +125,11 @@ $Handshake = 'results/status/handshake.json'
 $CheckCmd  = 'powershell -NoProfile -ExecutionPolicy Bypass -File code/local_check.ps1'
 $TimeoutMin = 30
 $LockStaleMin = 45
+$HandsFree = $false
+$AutoPull = $false
+$AutoPush = $false
+$AutoPushPrefix = 'local: auto'
+$AutoPushExclude = @('.env','.env.*','**/*.pem','**/*.key','**/credentials*','**/*secret*','**/*token*')
 if ($cfgPath) {
     $cfg = Get-Content -LiteralPath $cfgPath -Encoding UTF8 -Raw | ConvertFrom-Json
     if ($cfg.branch) { $Branch = [string]$cfg.branch }
@@ -123,10 +138,21 @@ if ($cfgPath) {
     if ($cfg.check_cmd) { $CheckCmd = [string]$cfg.check_cmd }
     if ($cfg.check_timeout_min) { $TimeoutMin = [int]$cfg.check_timeout_min }
     if ($cfg.lock_stale_min) { $LockStaleMin = [int]$cfg.lock_stale_min }
+    if ($null -ne $cfg.hands_free) { $HandsFree = [bool]$cfg.hands_free }
+    if ($null -ne $cfg.auto_pull)  { $AutoPull  = [bool]$cfg.auto_pull }
+    if ($null -ne $cfg.auto_push)  { $AutoPush  = [bool]$cfg.auto_push }
+    if ($cfg.auto_push_prefix) { $AutoPushPrefix = [string]$cfg.auto_push_prefix }
+    if ($cfg.auto_push_exclude) {
+        $AutoPushExclude = @($cfg.auto_push_exclude | ForEach-Object { [string]$_ })
+    }
 }
 if (-not $Branch) { $Branch = (git rev-parse --abbrev-ref HEAD).Trim() }
 if ($CheckTimeoutMin -gt 0) { $TimeoutMin = $CheckTimeoutMin }
 if ($LockStaleMin -lt ($TimeoutMin + 15)) { $LockStaleMin = $TimeoutMin + 15 }
+
+# hands_free is a master switch: when true, force both auto_pull and auto_push on
+if ($HandsFree) { $AutoPull = $true; $AutoPush = $true }
+Write-Host ("== hands-free: master={0} auto_pull={1} auto_push={2}" -f $HandsFree, $AutoPull, $AutoPush) -ForegroundColor DarkGray
 
 $taskName = 'git-sync-watch-' + $repoName
 $skillVer = ''
@@ -792,6 +818,7 @@ if ($Status) {
     Write-Host ("   branch      : {0} (remote {1})" -f $Branch, $Remote)
     Write-Host ("   task        : {0}" -f $taskName)
     Write-Host ("   skill       : {0}" -f $(if ($skillVer) { "v$skillVer" } else { '(unknown)' }))
+    Write-Host ("   hands-free  : master={0} auto_pull={1} auto_push={2}" -f $HandsFree, $AutoPull, $AutoPush)
     Write-Host ("   state dir   : {0}" -f $stateDir)
     if (-not $ti) {
         Write-Host "   scheduled   : NOT REGISTERED - run .\watch.ps1 -Register" -ForegroundColor Red
@@ -1156,6 +1183,118 @@ if ($Register -or $Unregister) {
 # The poll body is a function on purpose: every exit path returns an exit code
 # and the lock is removed by the caller, so a "return" deep inside can never
 # leave a stale lock behind (which would stall the watcher until it expires).
+
+# ---------------------------------------------------------------- hands-free
+# Match a repo-relative path against a simple glob (supports **, *, ?).
+function Test-AutoPushExcluded {
+    param([string]$RelPath)
+    $p = ($RelPath -replace '\\', '/').TrimStart('/')
+    foreach ($pat in $AutoPushExclude) {
+        $g = ($pat -replace '\\', '/')
+        # translate glob -> regex
+        $rx = [regex]::Escape($g)
+        $rx = $rx -replace '\\\\\*\\\\\*','<<<DS>>>'
+        $rx = $rx -replace '\\\\\*','[^/]*'
+        $rx = $rx -replace '<<<DS>>>','.*'
+        $rx = $rx -replace '\\\\\?','.'
+        if ($p -match ('^' + $rx + '$')) { return $true }
+        # also allow unanchored **/pat when the pattern has no slash
+        if ($g -notmatch '/') {
+            if ($p -match ('(^|/)' + $rx + '$')) { return $true }
+        }
+    }
+    return $false
+}
+
+# List dirty paths (modified + untracked), excluding ignored and excluded.
+function Get-DirtyPaths {
+    $out = @()
+    $prev = [Console]::OutputEncoding
+    try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+    $raw = git status --porcelain -uall 2>$null
+    try { [Console]::OutputEncoding = $prev } catch { }
+    if (-not $raw) { return @() }
+    foreach ($line in @($raw)) {
+        if (-not $line -or $line.Length -lt 4) { continue }
+        # porcelain v1: XY<space>path  OR  XY<space>old -> new
+        $rest = $line.Substring(3)
+        if ($rest -match ' -> ') { $rest = ($rest -split ' -> ', 2)[1] }
+        $rest = $rest.Trim().Trim('"')
+        if (-not $rest) { continue }
+        if (Test-AutoPushExcluded $rest) { continue }
+        $out += $rest
+    }
+    return $out
+}
+
+# Always-on auto pull (sync.ps1). Safe: stash + ff-only.
+function Invoke-AutoPull {
+    if (-not $AutoPull) { return 0 }
+    $sync = Join-Path $repo 'sync.ps1'
+    if (-not (Test-Path -LiteralPath $sync)) { $sync = Join-Path $PSScriptRoot 'sync.ps1' }
+    if (-not (Test-Path -LiteralPath $sync)) {
+        Add-Log 'auto_pull: sync.ps1 missing'
+        return 1
+    }
+    $global:LASTEXITCODE = 0
+    $out = (& $sync 2>&1 | Out-String)
+    $code = $LASTEXITCODE
+    if ($out.TrimEnd()) {
+        # keep host quiet unless something interesting happened
+        $interesting = ($out -match 'ERROR|diverg|conflict|FAIL|ahead|behind|Fast-forward|Already up')
+        if ($interesting) { Write-Host $out.TrimEnd() }
+    }
+    if ($code -ne 0) {
+        Add-Log "auto_pull: sync FAILED (exit $code)"
+        Set-State @{ last_auto_pull = "fail exit $code" }
+        return $code
+    }
+    Add-Log 'auto_pull: ok'
+    Set-State @{ last_auto_pull = 'ok'; last_auto_pull_at = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') }
+    return 0
+}
+
+# Always-on auto push of non-excluded dirty files (silent).
+function Invoke-AutoPush {
+    if (-not $AutoPush) { return 0 }
+    $dirty = @(Get-DirtyPaths)
+    if ($dirty.Count -eq 0) {
+        Add-Log 'auto_push: clean'
+        Set-State @{ last_auto_push = 'clean' }
+        return 0
+    }
+    # also skip if the only dirty things are handshake/check logs we ourselves own mid-check
+    # (those are pushed by the verdict path). Here we push user work.
+    $push = Join-Path $repo 'push.ps1'
+    if (-not (Test-Path -LiteralPath $push)) { $push = Join-Path $PSScriptRoot 'push.ps1' }
+    if (-not (Test-Path -LiteralPath $push)) {
+        Add-Log 'auto_push: push.ps1 missing'
+        return 1
+    }
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $msg = ("{0} {1} ({2} file(s))" -f $AutoPushPrefix, $stamp, $dirty.Count)
+    Write-Host ("== hands-free auto_push: {0} file(s) -> {1}" -f $dirty.Count, $msg) -ForegroundColor Cyan
+    Add-Log ("auto_push: {0} file(s): {1}" -f $dirty.Count, (($dirty | Select-Object -First 8) -join ', '))
+    $global:LASTEXITCODE = 0
+    $out = (& $push -NoPrompt $msg 2>&1 | Out-String)
+    $code = $LASTEXITCODE
+    if ($out.TrimEnd()) { Write-Host $out.TrimEnd() }
+    if ($code -eq 0) {
+        Add-Log "auto_push: ok ($msg)"
+        Set-State @{ last_auto_push = 'ok'; last_auto_push_msg = $msg; last_auto_push_at = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'); last_auto_push_files = $dirty.Count }
+        return 0
+    }
+    if ($code -eq 4) {
+        Add-Log 'auto_push: BLOCKED by auth - run .\\auth.ps1 -Setup'
+        Set-State @{ last_auto_push = 'auth blocked'; last_push = 'auth: no silent credential' }
+        Write-Host '[AUTH] auto_push could not run silently - run .\\auth.ps1 -Setup -Verify' -ForegroundColor Red
+        return 4
+    }
+    Add-Log "auto_push: FAILED (exit $code)"
+    Set-State @{ last_auto_push = "fail exit $code" }
+    return $code
+}
+
 function Invoke-PollRound {
     $pollStart = Get-Date
     # Every exit of this function MUST leave a closing line in
@@ -1178,9 +1317,12 @@ function Invoke-PollRound {
         $raw = git show "$Remote/$Branch`:$hsGit" 2>$null
         try { [Console]::OutputEncoding = $prevEnc } catch { }
         if (-not $raw) {
-            Add-Log 'no handshake yet - idle'
-            Set-State @{ last_action = 'idle'; last_note = 'no handshake' }
-            $script:PollSummary = ("== idle - no handshake file yet on {0}/{1}" -f $Remote, $Branch)
+            # hands-free still runs even with no handshake
+            $ap = Invoke-AutoPull
+            $au = Invoke-AutoPush
+            Add-Log 'no handshake yet - hands-free only'
+            Set-State @{ last_action = 'hands_free'; last_note = 'no handshake' }
+            $script:PollSummary = ("== hands-free (no handshake yet) pull={0} push={1} on {2}/{3}" -f $ap, $au, $Remote, $Branch)
             return 0
         }
         $hs = (($raw -join "`n") | ConvertFrom-Json)
@@ -1204,9 +1346,12 @@ function Invoke-PollRound {
         }
 
         if ($hs.arena_state -ne 'awaiting_check' -or $hs.local_state -ne 'pending') {
-            Add-Log ("idle (arena={0} local={1})" -f $hs.arena_state, $hs.local_state)
-            Set-State @{ last_action = 'idle'; last_note = ("arena={0} local={1}" -f $hs.arena_state, $hs.local_state); last_round = [int]$hs.round }
-            $script:PollSummary = ("== idle - no check requested (arena={0} local={1})" -f $hs.arena_state, $hs.local_state)
+            # hands-free: still pull agent updates + push local dirty files
+            $ap = Invoke-AutoPull
+            $au = Invoke-AutoPush
+            Add-Log ("hands_free (arena={0} local={1}) pull={2} push={3}" -f $hs.arena_state, $hs.local_state, $ap, $au)
+            Set-State @{ last_action = 'hands_free'; last_note = ("arena={0} local={1}" -f $hs.arena_state, $hs.local_state); last_round = [int]$hs.round }
+            $script:PollSummary = ("== hands-free pull={0} push={1} (arena={2} local={3})" -f $ap, $au, $hs.arena_state, $hs.local_state)
             return 0
         }
 
@@ -1225,6 +1370,9 @@ function Invoke-PollRound {
             $script:PollSummary = ("== round {0}: sync FAILED - will retry next poll" -f $round)
             return 1
         }
+        # hands-free: also flush any local dirty files so the check sees them
+        # and the agent receives them with the same round
+        $null = Invoke-AutoPush
 
         # 1b. re-read the handshake from the synced worktree (UTF-8, BOM-tolerant)
         $hsAbs = Join-Path $repo $hsGit

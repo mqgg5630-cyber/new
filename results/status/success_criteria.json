@@ -1,0 +1,15 @@
+{
+  "description": "Hands-free acceptance for arena/01a0a90b-new: deliverables + local roundtrip file.",
+  "require_files": [
+    "deliverable/git-sync-local-connect.docx",
+    "deliverable/git-sync-local-connect.pptx",
+    "results/local-roundtrip/from-local.txt"
+  ],
+  "require_contains": {
+    "results/local-roundtrip/from-local.txt": "local->arena roundtrip OK"
+  },
+  "min_bytes": {
+    "deliverable/git-sync-local-connect.docx": 5000,
+    "deliverable/git-sync-local-connect.pptx": 5000
+  }
+}

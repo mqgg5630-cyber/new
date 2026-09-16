@@ -1,3 +1,5 @@
+> **v2.7.0 hands-free**：本机 auto_pull/auto_push + Agent `agent-handsfree.sh`。详见 `deliverable/HANDS_FREE_v2.7.0.md` 与 SKILL.md 第 9 节。
+
 > 当前版本 **v2.6.9**（开发分支：新会话暂停其他值守 / `-Focus` 切回；v2.6.8 收尾行 round 18 已通过，清单 `deliverable/CASE_STUDY_v2.6.7.md`）。`main` 上是 **v2.6.7**（PR #1；发行说明 `deliverable/RELEASE_v2.6.7.md`）。
 
 # 本地 ↔ Agent 同步 skill —— 使用说明
